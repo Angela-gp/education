@@ -5,7 +5,7 @@ use anchor_spl::{
     associated_token::get_associated_token_address_with_program_id,
     token_interface::{Mint, TokenAccount},
 };
-use litesvm::LiteSVM;
+use litesvm::{types::FailedTransactionMetadata, LiteSVM};
 use solana_keypair::Keypair;
 use solana_message::{AccountMeta, Instruction, Message};
 use solana_signer::Signer;
@@ -15,6 +15,7 @@ use std::{fs, path::PathBuf};
 const DECIMALS: u8 = 6;
 const INITIAL_MINT_AMOUNT: u64 = 1_000_000_000;
 const TRANSFER_AMOUNT: u64 = 125_000_000;
+const BURN_AMOUNT: u64 = 200_000_000;
 
 fn program_bytes() -> Vec<u8> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -71,12 +72,10 @@ fn send_failure(
     instruction: Instruction,
     signers: &[&dyn Signer],
     operation: &str,
-) {
+) -> FailedTransactionMetadata {
     let transaction = transaction(svm, payer, instruction, signers);
-    assert!(
-        svm.send_transaction(transaction).is_err(),
-        "{operation} must fail"
-    );
+    svm.send_transaction(transaction)
+        .expect_err(&format!("{operation} must fail"))
 }
 
 fn read_mint(svm: &LiteSVM, address: &anchor_lang::prelude::Pubkey) -> Mint {
@@ -235,6 +234,24 @@ impl TestContext {
                 token_program: self.token_program(),
             },
             solana_level_1_token_starter::instruction::TransferTokens { amount },
+        )
+    }
+
+    fn burn_instruction(
+        &self,
+        authority: &Keypair,
+        mint: &Keypair,
+        token_account: anchor_lang::prelude::Pubkey,
+        amount: u64,
+    ) -> Instruction {
+        instruction(
+            solana_level_1_token_starter::accounts::BurnTokens {
+                authority: authority.pubkey(),
+                mint: mint.pubkey(),
+                token_account,
+                token_program: self.token_program(),
+            },
+            solana_level_1_token_starter::instruction::BurnTokens { amount },
         )
     }
 
@@ -534,6 +551,170 @@ fn rejects_transfer_to_the_source_account() {
         instruction,
         &[&context.payer, &context.alice],
         "transfer_tokens with identical source and destination",
+    );
+
+    assert_eq!(
+        read_token_account(&context.svm, &alice_ata).amount,
+        balance_before
+    );
+    assert_eq!(
+        read_mint(&context.svm, &context.mint.pubkey()).supply,
+        supply_before
+    );
+}
+
+#[test]
+fn burns_tokens_and_decreases_balance_and_supply_equally() {
+    let mut context = TestContext::new();
+    context.create_primary_fixture();
+    let alice_ata = context.ata(&context.alice, &context.mint);
+    context.mint_tokens(alice_ata, INITIAL_MINT_AMOUNT);
+
+    let balance_before = read_token_account(&context.svm, &alice_ata).amount;
+    let supply_before = read_mint(&context.svm, &context.mint.pubkey()).supply;
+    let instruction =
+        context.burn_instruction(&context.alice, &context.mint, alice_ata, BURN_AMOUNT);
+    send_success(
+        &mut context.svm,
+        &context.payer,
+        instruction,
+        &[&context.payer, &context.alice],
+        "burn_tokens",
+    );
+
+    assert_eq!(
+        read_token_account(&context.svm, &alice_ata).amount,
+        balance_before - BURN_AMOUNT
+    );
+    assert_eq!(
+        read_mint(&context.svm, &context.mint.pubkey()).supply,
+        supply_before - BURN_AMOUNT
+    );
+}
+
+#[test]
+fn rejects_zero_burn_without_changing_state() {
+    let mut context = TestContext::new();
+    context.create_primary_fixture();
+    let alice_ata = context.ata(&context.alice, &context.mint);
+    context.mint_tokens(alice_ata, INITIAL_MINT_AMOUNT);
+
+    let balance_before = read_token_account(&context.svm, &alice_ata).amount;
+    let supply_before = read_mint(&context.svm, &context.mint.pubkey()).supply;
+    let instruction = context.burn_instruction(&context.alice, &context.mint, alice_ata, 0);
+    let failure = send_failure(
+        &mut context.svm,
+        &context.payer,
+        instruction,
+        &[&context.payer, &context.alice],
+        "burn_tokens with zero amount",
+    );
+    assert!(
+        failure
+            .meta
+            .logs
+            .iter()
+            .any(|log| log.contains("Amount must be greater than zero")),
+        "zero burn must return AmountMustBePositive: {:?}",
+        failure.meta.logs
+    );
+
+    assert_eq!(
+        read_token_account(&context.svm, &alice_ata).amount,
+        balance_before
+    );
+    assert_eq!(
+        read_mint(&context.svm, &context.mint.pubkey()).supply,
+        supply_before
+    );
+}
+
+#[test]
+fn rejects_burn_by_wrong_authority_without_changing_state() {
+    let mut context = TestContext::new();
+    context.create_primary_fixture();
+    let alice_ata = context.ata(&context.alice, &context.mint);
+    context.mint_tokens(alice_ata, INITIAL_MINT_AMOUNT);
+
+    let balance_before = read_token_account(&context.svm, &alice_ata).amount;
+    let supply_before = read_mint(&context.svm, &context.mint.pubkey()).supply;
+    let instruction = context.burn_instruction(
+        &context.wrong_authority,
+        &context.mint,
+        alice_ata,
+        BURN_AMOUNT,
+    );
+    send_failure(
+        &mut context.svm,
+        &context.payer,
+        instruction,
+        &[&context.payer, &context.wrong_authority],
+        "burn_tokens with wrong authority",
+    );
+
+    assert_eq!(
+        read_token_account(&context.svm, &alice_ata).amount,
+        balance_before
+    );
+    assert_eq!(
+        read_mint(&context.svm, &context.mint.pubkey()).supply,
+        supply_before
+    );
+}
+
+#[test]
+fn rejects_burn_with_another_mint_without_changing_state() {
+    let mut context = TestContext::new();
+    context.create_primary_fixture();
+    let other_mint = context.other_mint.insecure_clone();
+    context.create_mint(&other_mint);
+    let alice_ata = context.ata(&context.alice, &context.mint);
+    context.mint_tokens(alice_ata, INITIAL_MINT_AMOUNT);
+
+    let balance_before = read_token_account(&context.svm, &alice_ata).amount;
+    let primary_supply_before = read_mint(&context.svm, &context.mint.pubkey()).supply;
+    let other_supply_before = read_mint(&context.svm, &context.other_mint.pubkey()).supply;
+    let instruction =
+        context.burn_instruction(&context.alice, &context.other_mint, alice_ata, BURN_AMOUNT);
+    send_failure(
+        &mut context.svm,
+        &context.payer,
+        instruction,
+        &[&context.payer, &context.alice],
+        "burn_tokens with another mint",
+    );
+
+    assert_eq!(
+        read_token_account(&context.svm, &alice_ata).amount,
+        balance_before
+    );
+    assert_eq!(
+        read_mint(&context.svm, &context.mint.pubkey()).supply,
+        primary_supply_before
+    );
+    assert_eq!(
+        read_mint(&context.svm, &context.other_mint.pubkey()).supply,
+        other_supply_before
+    );
+}
+
+#[test]
+fn rejects_burn_above_balance_without_changing_state() {
+    let mut context = TestContext::new();
+    context.create_primary_fixture();
+    let alice_ata = context.ata(&context.alice, &context.mint);
+    context.mint_tokens(alice_ata, BURN_AMOUNT);
+
+    let balance_before = read_token_account(&context.svm, &alice_ata).amount;
+    let supply_before = read_mint(&context.svm, &context.mint.pubkey()).supply;
+    let instruction =
+        context.burn_instruction(&context.alice, &context.mint, alice_ata, balance_before + 1);
+    send_failure(
+        &mut context.svm,
+        &context.payer,
+        instruction,
+        &[&context.payer, &context.alice],
+        "burn_tokens above available balance",
     );
 
     assert_eq!(
