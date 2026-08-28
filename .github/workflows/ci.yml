@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - task/01-tests
+      - task/02-burn
   workflow_dispatch:
 
 permissions:
