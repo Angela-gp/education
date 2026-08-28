@@ -91,6 +91,30 @@ cargo test --workspace --locked
 
 Тест загружает собранный файл `target/deploy/solana_level_1_token_starter.so`, поэтому перед первым `cargo test` нужен `anchor build --ignore-keys`.
 
+## Выполненное задание `task/01-tests`
+
+Решение рассчитано на зафиксированный стек: Anchor CLI/crates `1.1.2`, Solana CLI `3.1.10`, Rust `1.89.0` и LiteSVM `0.10.0`. Все тестовые mint создаются через Token-2022, program-код использует `anchor_spl::token_interface`, а перевод выполняется только через `transfer_checked`. Новый TypeScript-код в решении отсутствует.
+
+Полный запуск из чистого checkout:
+
+```bash
+anchor --version
+solana --version
+rustc --version
+anchor build --ignore-keys
+cargo test --workspace --locked
+```
+
+Ожидаемые версии первых трёх команд — `anchor-cli 1.1.2`, `solana-cli 3.1.10` и `rustc 1.89.0`. Ожидаемый результат сборки — успешное создание `target/deploy/solana_level_1_token_starter.so`; результат интеграционного набора — `8 passed; 0 failed`.
+
+Тесты проверяют:
+
+- параметры Token-2022 mint: program owner, `decimals`, mint authority и начальный `supply`;
+- program owner и поля `owner`, `mint`, `amount` созданного associated token account;
+- точные изменения баланса и `supply` после `mint_tokens`;
+- оба баланса и неизменность `supply` после `transfer_tokens`;
+- отказ и отсутствие изменений состояния при нулевой сумме, неверном authority, token account другого mint и совпадающих source/destination.
+
 ## Правила сдачи
 
 - сдавайте публичную ссылку на GitHub-репозиторий и указывайте ветку или commit SHA;
