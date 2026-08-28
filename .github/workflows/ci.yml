@@ -5,6 +5,7 @@ on:
     branches:
       - task/01-tests
       - task/02-burn
+      - task/03-escrow
   workflow_dispatch:
 
 permissions:
