@@ -6,7 +6,10 @@ use crate::error::TokenStarterError;
 #[derive(Accounts)]
 pub struct BurnTokens<'info> {
     pub authority: Signer<'info>,
-    #[account(mint::token_program = token_program)]
+    #[account(
+        mut,
+        mint::token_program = token_program,
+    )]
     pub mint: InterfaceAccount<'info, Mint>,
     #[account(
         mut,
