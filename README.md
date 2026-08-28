@@ -77,10 +77,11 @@ cargo test --workspace --locked
 - создание associated token account;
 - выпуск токенов через `mint_to`;
 - перевод через `transfer_checked`;
+- сжигание токенов через `burn_checked` с `decimals` из mint;
 - проверки положительной суммы, полномочий, mint и token program на уровне Anchor accounts constraints;
-- один эталонный LiteSVM-тест создания Token-2022 mint.
+- воспроизводимый набор Rust + LiteSVM-тестов для всех реализованных инструкций.
 
-Функции `burn_tokens` и Escrow намеренно отсутствуют: студент реализует их в следующих заданиях.
+Escrow намеренно отсутствует: студент реализует его в следующем задании.
 
 ## Быстрый старт
 
@@ -114,6 +115,26 @@ cargo test --workspace --locked
 - точные изменения баланса и `supply` после `mint_tokens`;
 - оба баланса и неизменность `supply` после `transfer_tokens`;
 - отказ и отсутствие изменений состояния при нулевой сумме, неверном authority, token account другого mint и совпадающих source/destination.
+
+## Выполненное задание `task/02-burn`
+
+Инструкция `burn_tokens` использует `anchor_spl::token_interface::burn_checked` и передаёт в CPI значение `decimals`, прочитанное из проверенного mint. Критичные аккаунты типизированы: `authority` — `Signer`, `mint` — `InterfaceAccount<Mint>`, исходный token account — `InterfaceAccount<TokenAccount>`, token program — `Interface<TokenInterface>`. `UncheckedAccount` не используется.
+
+Anchor account constraints до выполнения CPI проверяют:
+
+- подпись владельца token account через `Signer` и `token::authority = authority`;
+- связь token account с mint через `token::mint = mint`;
+- соответствие mint и token account переданному token program через `mint::token_program` и `token::token_program`;
+- положительную сумму сжигания через программную ошибку `AmountMustBePositive`.
+
+Команды для чистого checkout остаются теми же:
+
+```bash
+anchor build --ignore-keys
+cargo test --workspace --locked
+```
+
+Ожидаемый результат — успешная сборка и `13 passed; 0 failed`. Позитивный тест подтверждает одинаковое уменьшение баланса token account и общего `supply`. Негативные тесты покрывают нулевую сумму, неверный authority, другой mint и недостаточный баланс; после каждого отказа отдельно проверяется неизменность баланса и `supply`.
 
 ## Правила сдачи
 
