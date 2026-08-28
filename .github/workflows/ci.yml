@@ -16,7 +16,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust 1.89.0
         run: |
@@ -29,7 +29,7 @@ jobs:
           echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
 
       - name: Install Anchor CLI 1.1.2
-        run: cargo install anchor-cli --version 1.1.2 --locked
+        run: cargo +stable install anchor-cli --version 1.1.2 --locked
 
       - name: Verify toolchain versions
         run: |
